@@ -11,8 +11,9 @@
   #stage { position:fixed; inset:0; touch-action:none; }
   video { position:fixed; inset:0; width:100%; height:100%; object-fit:cover; transform:scaleX(-1); opacity:.55; display:none; }
   canvas { position:fixed; inset:0; width:100%; height:100%; touch-action:none; }
-  .bar { position:fixed; left:0; right:0; bottom:0; display:flex; gap:8px; justify-content:center; padding:12px 12px calc(12px + env(safe-area-inset-bottom)); pointer-events:none; }
-  .bar button { pointer-events:auto; background:rgba(20,24,34,.8); color:var(--fg); border:1px solid rgba(255,255,255,.14); border-radius:999px; padding:10px 16px; font-size:14px; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); }
+  .bar { position:fixed; left:0; right:0; bottom:0; display:flex; flex-wrap:wrap; gap:6px; justify-content:center; padding:10px 8px calc(10px + env(safe-area-inset-bottom)); pointer-events:none; }
+  .bar button { pointer-events:auto; background:rgba(20,24,34,.8); color:var(--fg); border:1px solid rgba(255,255,255,.14); border-radius:999px; padding:9px 13px; font-size:13px; white-space:nowrap; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); }
+  #btnSong { border-color:rgba(255,214,110,.5); color:#ffd66e; }
   .bar button.on { border-color:var(--accent); color:var(--accent); }
   #intro { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(7,8,12,.88); z-index:5; padding:24px; }
   #intro .card { max-width:420px; text-align:center; }
@@ -52,7 +53,8 @@
 
 <div class="bar">
   <button id="btnCam">Camera</button>
-  <button id="btnScale">Scale: Pentatonic</button>
+  <button id="btnSong">♫ Free play</button>
+  <button id="btnScale">Pentatonic</button>
   <button id="btnUndo">Undo</button>
   <button id="btnClear">Clear</button>
 </div>
@@ -185,6 +187,52 @@
     return { midi, idx, freq: 440 * Math.pow(2, (midi - 69) / 12), name: NAMES[midi % 12] + (Math.floor(midi / 12) - 1) };
   }
 
+  // ---------- Songs ----------
+  // Each note: [midi, chord or 0, syllable]. Any pluck plays the NEXT note, so you just supply the rhythm.
+  const mtof = m => 440 * Math.pow(2, (m - 69) / 12);
+  const TW1 = [[72,'C','Twin-'],[72,0,'kle'],[79,0,'twin-'],[79,0,'kle'],[81,'F','lit-'],[81,0,'tle'],[79,'C','star']];
+  const TW2 = [[77,'F','How'],[77,0,'I'],[76,'C','won-'],[76,0,'der'],[74,'G','what'],[74,0,'you'],[72,'C','are']];
+  const MA1 = [[76,'C','Ma-'],[74,0,'ry'],[72,0,'had'],[74,0,'a'],[76,'C','lit-'],[76,0,'tle'],[76,0,'lamb,']];
+  const nm = (m, c) => [m, c, NAMES[m % 12]];
+  const SONGS = [
+    { title: 'Twinkle Twinkle Little Star', lines: [TW1, TW2,
+      [[79,'C','Up'],[79,0,'a-'],[77,'F','bove'],[77,0,'the'],[76,'C','world'],[76,0,'so'],[74,'G','high,']],
+      [[79,'C','Like'],[79,0,'a'],[77,'F','dia-'],[77,0,'mond'],[76,'C','in'],[76,0,'the'],[74,'G','sky.']],
+      TW1, TW2] },
+    { title: 'Mary Had a Little Lamb', lines: [MA1,
+      [[74,'G','lit-'],[74,0,'tle'],[74,0,'lamb,'],[76,'C','lit-'],[79,0,'tle'],[79,0,'lamb,']],
+      MA1,
+      [[76,'C','its'],[74,'G','fleece'],[74,0,'was'],[76,0,'white'],[74,0,'as'],[72,'C','snow.']]] },
+    { title: 'Ode to Joy', lines: [
+      [nm(76,'C'),nm(76),nm(77),nm(79),nm(79,'G'),nm(77),nm(76),nm(74)],
+      [nm(72,'C'),nm(72),nm(74),nm(76),nm(76,'G'),nm(74),nm(74)],
+      [nm(76,'C'),nm(76),nm(77),nm(79),nm(79,'G'),nm(77),nm(76),nm(74)],
+      [nm(72,'C'),nm(72),nm(74),nm(76),nm(74,'G'),nm(72,'C'),nm(72)]] },
+  ];
+  SONGS.forEach(s => { s.notes = []; s.lines.forEach((ln, li) => ln.forEach(([m, c, syl]) => s.notes.push({ m, c, syl, li }))); });
+  const CHORDS = { C: [48, 52, 55, 60], F: [48, 53, 57, 60], G: [47, 50, 55, 59] };
+  let songIdx = -1, songPos = 0, lastSongHit = 0;
+  const song = () => songIdx >= 0 ? SONGS[songIdx] : null;
+
+  function playChord(name) {
+    (CHORDS[name] || []).forEach((m, i) => setTimeout(() => pluck(mtof(m), 0.22, -0.3 + i * 0.2), i * 28));
+  }
+
+  // Lay out a harp with one string per pitch the song uses: low notes long on the left, high notes short on the right.
+  function layoutSongStrings() {
+    strings.length = 0; sparks.length = 0;
+    const s = song(); if (!s) return;
+    const pitches = [...new Set(s.notes.map(n => n.m))].sort((a, b) => a - b);
+    const n = pitches.length;
+    pitches.forEach((m, i) => {
+      const f = n > 1 ? i / (n - 1) : 0;
+      const x = W * (0.12 + 0.76 * f);
+      const ay = H * (0.24 + 0.06 * f), by = H * (0.82 - 0.26 * f);
+      strings.push({ ax: x, ay, bx: x + W * 0.03, by, L: Math.hypot(W * 0.03, by - ay), midi: m, idx: i,
+        freq: mtof(m), name: NAMES[m % 12], hue: 160 + f * 200, amp: 0, phase: 0, lastHit: 0, born: performance.now() + i * 60, fixed: true });
+    });
+  }
+
   // ---------- Strings ----------
   const strings = [];
   const sparks = [];
@@ -196,14 +244,37 @@
     const n = noteForLength(L);
     const s = { ax, ay, bx, by, L, ...n, hue: (n.idx / (NOTES.length - 1)) * 260 + 160, amp: 0, phase: 0, lastHit: 0, born: performance.now() };
     strings.push(s);
-    playString(s, 0.7, 0.5);
+    if (!song()) playString(s, 0.7, 0.5);
     return s;
   }
-  function retune() { strings.forEach(s => Object.assign(s, noteForLength(s.L), { hue: (noteForLength(s.L).idx / (NOTES.length - 1)) * 260 + 160 })); }
+  function retune() { strings.forEach(s => { if (!s.fixed) Object.assign(s, noteForLength(s.L), { hue: (noteForLength(s.L).idx / (NOTES.length - 1)) * 260 + 160 }); }); }
 
   function playString(s, vel, along) {
     const now = performance.now();
     if (now - s.lastHit < 90) return;
+    const sg = song();
+    if (sg) {
+      // one note per gesture: a single sweep across several strings still plays just the next note
+      if (now - lastSongHit < 170) return;
+      lastSongHit = now; s.lastHit = now;
+      const note = sg.notes[songPos];
+      const target = strings.find(x => x.fixed && x.midi === note.m) || s;
+      if (note.c) playChord(note.c);
+      target.amp = Math.min(14, 7 + vel * 8);
+      pluck(mtof(note.m), Math.min(1, 0.45 + vel), ((target.ax + target.bx) / 2 / W) * 2 - 1);
+      const k = target === s ? 14 : 8;
+      for (let i = 0; i < k; i++) sparks.push({ s: target, u: target === s ? along : Math.random(), v: (Math.random() < .5 ? -1 : 1) * (0.006 + Math.random() * 0.02), life: 1, sz: 1 + Math.random() * 2.5, off: (Math.random() - .5) * 6 });
+      if (target !== s) s.amp = Math.max(s.amp, 3);
+      songPos++;
+      if (songPos >= sg.notes.length) {
+        songPos = 0;
+        setTimeout(() => {
+          toast('🎉 You played “' + sg.title + '”! Play again from the top.', 3500);
+          strings.forEach((st, i) => setTimeout(() => { st.amp = 10; for (let j = 0; j < 10; j++) sparks.push({ s: st, u: Math.random(), v: (Math.random() < .5 ? -1 : 1) * 0.015, life: 1, sz: 2, off: 0 }); }, i * 70));
+        }, 400);
+      }
+      return;
+    }
     s.lastHit = now;
     s.amp = Math.min(14, 6 + vel * 8);
     pluck(s.freq, Math.min(1, 0.35 + vel), ((s.ax + s.bx) / 2 / W) * 2 - 1);
@@ -240,7 +311,7 @@
     initAudio();
     cv.setPointerCapture(e.pointerId);
     const nearStr = strings.some(s => distToSeg(e.clientX, e.clientY, s) < 18);
-    pointers.set(e.pointerId, { sx: e.clientX, sy: e.clientY, x: e.clientX, y: e.clientY, px: e.clientX, py: e.clientY, draw: !nearStr, moved: 0, t0: performance.now() });
+    pointers.set(e.pointerId, { sx: e.clientX, sy: e.clientY, x: e.clientX, y: e.clientY, px: e.clientX, py: e.clientY, draw: !nearStr && !song(), moved: 0, t0: performance.now() });
   });
   cv.addEventListener('pointermove', e => {
     const p = pointers.get(e.pointerId);
@@ -352,7 +423,7 @@
     const nx = -dy / L, ny = dx / L;
     s.phase += 0.9 + 18 / Math.sqrt(L);
     s.amp *= 0.955;
-    const age = Math.min(1, (now - s.born) / 350);
+    const age = Math.max(0.001, Math.min(1, (now - s.born) / 350));
     const col = `hsla(${s.hue},90%,72%,`;
     const segs = 40;
     ctx.save();
@@ -406,6 +477,42 @@
     ctx.restore();
   }
 
+  function drawSongGuide(now) {
+    const sg = song(); if (!sg) return;
+    const note = sg.notes[songPos];
+    // pulse the string that will sound next
+    const t = strings.find(x => x.fixed && x.midi === note.m);
+    if (t) {
+      const pulse = 0.35 + 0.3 * Math.sin(now / 160);
+      ctx.save(); ctx.lineCap = 'round';
+      ctx.strokeStyle = `rgba(255,214,110,${pulse * 0.35})`; ctx.lineWidth = 22;
+      ctx.beginPath(); ctx.moveTo(t.ax, t.ay); ctx.lineTo(t.bx, t.by); ctx.stroke();
+      ctx.fillStyle = `rgba(255,214,110,${0.6 + pulse * 0.5})`; ctx.font = '600 15px system-ui,sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText('▼', t.ax, t.ay - 12);
+      ctx.restore();
+    }
+    // title + lyric line with the current syllable highlighted
+    const top = 54;
+    ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(255,214,110,.75)'; ctx.font = '600 12px system-ui,sans-serif';
+    ctx.fillText(sg.title.toUpperCase() + '  ·  ' + (songPos + 1) + '/' + sg.notes.length, W / 2, top);
+    const line = sg.notes.filter(n => n.li === note.li);
+    let fs = 20; ctx.font = `500 ${fs}px system-ui,sans-serif`;
+    const parts = line.map(n => n.syl + (n.syl.endsWith('-') ? '' : ' '));
+    let total = ctx.measureText(parts.join('')).width;
+    if (total > W - 32) { fs = Math.floor(fs * (W - 32) / total); ctx.font = `500 ${fs}px system-ui,sans-serif`; total = ctx.measureText(parts.join('')).width; }
+    let x = W / 2 - total / 2; ctx.textAlign = 'left';
+    const startIdx = sg.notes.indexOf(line[0]);
+    parts.forEach((p, i) => {
+      const gi = startIdx + i;
+      ctx.fillStyle = gi < songPos ? 'rgba(200,210,230,.35)' : gi === songPos ? '#ffd66e' : 'rgba(235,240,250,.9)';
+      ctx.fillText(p, x, top + 28);
+      if (gi === songPos) { ctx.fillRect(x, top + 28 + fs * 0.7, ctx.measureText(p.trim()).width, 2); }
+      x += ctx.measureText(p).width;
+    });
+    ctx.restore();
+  }
+
   function frame(now) {
     processHands();
     ctx.clearRect(0, 0, W, H);
@@ -418,6 +525,7 @@
     }
 
     for (const s of strings) drawString(s, now);
+    drawSongGuide(now);
 
     // sparks
     ctx.save(); ctx.globalCompositeOperation = 'lighter';
@@ -465,13 +573,24 @@
   document.getElementById('startTouch').onclick = () => { initAudio(); chime(); intro.style.display = 'none'; };
   document.getElementById('startCam').onclick = () => { initAudio(); intro.style.display = 'none'; startCamera(); };
   document.getElementById('btnCam').onclick = () => startCamera();
-  document.getElementById('btnClear').onclick = () => { strings.length = 0; sparks.length = 0; };
-  document.getElementById('btnUndo').onclick = () => { strings.pop(); };
+  document.getElementById('btnClear').onclick = () => { strings.length = 0; sparks.length = 0; songPos = 0; if (song()) layoutSongStrings(); };
+  document.getElementById('btnUndo').onclick = () => { if (song()) { songPos = Math.max(0, songPos - 1); return; } strings.pop(); };
+  const bsong = document.getElementById('btnSong');
+  bsong.onclick = () => {
+    initAudio();
+    songIdx = songIdx + 1 >= SONGS.length ? -1 : songIdx + 1;
+    songPos = 0;
+    const sg = song();
+    bsong.textContent = sg ? '♫ ' + sg.title.split(' ').slice(0, 2).join(' ') : '♫ Free play';
+    if (sg) { layoutSongStrings(); toast('Sweep through any string, one note at a time, in your own rhythm. The glowing string sounds next.', 4500); }
+    else { strings.length = 0; toast('Free play: draw your own strings.'); }
+  };
+  window.addEventListener('resize', () => { if (song()) layoutSongStrings(); });
   const bs = document.getElementById('btnScale');
   bs.onclick = () => {
     initAudio();
     scaleIdx = (scaleIdx + 1) % SCALES.length; NOTES = scaleNotes(); retune();
-    bs.textContent = 'Scale: ' + SCALES[scaleIdx].name;
+    bs.textContent = SCALES[scaleIdx].name;
     strings.forEach((s, i) => setTimeout(() => playString(s, .4, .5), i * 90));
   };
 })();
